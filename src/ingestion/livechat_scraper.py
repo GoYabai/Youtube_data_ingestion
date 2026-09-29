@@ -1,31 +1,48 @@
 import json
 from pathlib import Path
 
-import chat_downloader
+import pytchat
 
 
 def fetch_livechat_vod(video_id):
     all_chat_messages = []
-    url = "https://www.youtube.com/watch?v=" + str(video_id)
 
-    print("[+] Sart fetch live chat from vod, please wait... ")
+    print("[+] Fetching live chat, please wait...")
     try:
-        chat = chat_downloader.ChatDownloader().get_chat(url)
-        for mes in chat:
-            simplified_mes = {
-                "author": mes.get("author", {}).get("name"),
-                "time": mes.get("time_text"),
-                "message": mes.get("message"),
-            }
-            all_chat_messages.append(simplified_mes)
-            if len(all_chat_messages) % 1000 == 0:
-                print(f"Successfully retrieved {len(all_chat_messages)} live chat")
-    except Exception:
-        raise Exception("\n[-] Error: This is a normal vid not a VOD.")
+        # Initialize scraper
+        chat = pytchat.create(video_id=video_id)
 
+        # Check if chat is available
+        if not chat.is_alive():
+            raise Exception("No live chat found or access blocked.")
+
+        # Fetch messages
+        while chat.is_alive():
+            for c in chat.get().sync_items():
+                simplified_mes = {
+                    "author": c.author.name,
+                    "time": c.datetime,
+                    "message": c.message,
+                }
+                all_chat_messages.append(simplified_mes)
+
+                # Print progress
+                current_count = len(all_chat_messages)
+                if current_count % 1000 == 0:
+                    print(f"   -> Retrieved {current_count} messages...")
+
+    except Exception as e:
+        raise Exception(f"Scraping error: {e}")
+
+    # Check for empty results
+    if len(all_chat_messages) == 0:
+        raise Exception("No messages found in this video.")
+
+    # Save to JSON
     save_into = Path(f"data/raw/livechat_{video_id}.json")
     save_into.parent.mkdir(parents=True, exist_ok=True)
 
     with open(save_into, mode="w", encoding="utf-8") as f:
         json.dump(all_chat_messages, f, ensure_ascii=False, indent=4)
-    print(f"Successful save {len(all_chat_messages)} comment from {video_id}")
+
+    print(f"[+] Successfully saved {len(all_chat_messages)} messages from {video_id}")

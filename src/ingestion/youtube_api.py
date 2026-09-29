@@ -5,46 +5,57 @@ from pathlib import Path
 import dotenv
 import requests
 
-# load the api key
+# Load API key
 dotenv.load_dotenv()
-
-# Get the key
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 
-# fetch youtube comment
 def fetch_youtube_comments(video_id):
-    all_comments = []  # store all comment from video
-    page_token = None  # mark the page for the loop
+    all_comments = []  # Store comments
+    page_token = None  # Pagination token
     url_comment = "https://www.googleapis.com/youtube/v3/commentThreads"
 
+    # API parameters
     params = {
         "part": "snippet",
         "videoId": video_id,
         "key": YOUTUBE_API_KEY,
         "maxResults": 100,
-    }  # parameter for the api
+    }
+
+    print("[+] Fetching comments via API...")
 
     while True:
-        # move to the next page, if none get the first comment
+        # Set page token if exists
         if page_token:
             params["pageToken"] = page_token
 
-        # fetch the page_token from vidieo
+        # Fetch data
         response = requests.get(url=url_comment, params=params).json()
 
-        # get item from request to all_comment
+        # Handle API errors (e.g., quota exceeded)
+        if "error" in response:
+            print(f"\n[-] API Error: {response['error']['message']}")
+            break
+
+        # Extract and append comments
         items = response.get("items", [])
         all_comments.extend(items)
+
+        # Print progress on the same line
+        print(f"\r   -> Retrieved {len(all_comments)} comments...", end="", flush=True)
 
         next_token = response.get("nextPageToken")
         page_token = next_token
         if not page_token:
             break
 
+    print("\n[+] Fetching completed. Saving file...")
+
     save_into = Path(f"data/raw/comments_{video_id}.json")
     save_into.parent.mkdir(parents=True, exist_ok=True)
 
     with open(save_into, mode="w", encoding="utf-8") as f:
         json.dump(all_comments, f, ensure_ascii=False, indent=4)
-    print(f"Successful save {len(all_comments)} comment from {video_id}")
+
+    print(f"[+] Successfully saved {len(all_comments)} comments from {video_id}")
