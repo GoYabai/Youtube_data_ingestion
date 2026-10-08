@@ -1,4 +1,4 @@
-pathlib
-dotenv
 requests
-chat-downloader
+python-dotenv
+pytchat-ng
+pyspark

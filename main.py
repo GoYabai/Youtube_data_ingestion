@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.ingestion.livechat_scraper import fetch_livechat_vod
+from src.ingestion.livechat_scraper import fetch_livechat
 from src.ingestion.youtube_api import fetch_youtube_comments
 from src.processing.extract_video_id import extract_video_id
 
@@ -82,7 +82,7 @@ if __name__ == "__main__":
         elif choice == 2:
             print("[+] Start fetching video live chat...")
             try:
-                fetch_livechat_vod(video_id)
+                fetch_livechat(video_id)
             except Exception as e:
                 print(f"[-] Error: {e}")
             print("-" * 50)
