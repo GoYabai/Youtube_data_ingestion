@@ -6,11 +6,15 @@ import dotenv
 import requests
 
 # Load API key
-dotenv.load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+dotenv.load_dotenv(PROJECT_ROOT / ".env")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 
 def fetch_youtube_comments(video_id):
+    if not YOUTUBE_API_KEY:
+        raise RuntimeError("Missing YOUTUBE_API_KEY. Set it in .env in the project root.")
+
     all_comments = []  # Store comments
     page_token = None  # Pagination token
     url_comment = "https://www.googleapis.com/youtube/v3/commentThreads"
@@ -52,7 +56,7 @@ def fetch_youtube_comments(video_id):
 
     print("\n[+] Fetching completed. Saving file...")
 
-    save_into = Path(f"data/raw/comments_{video_id}.json")
+    save_into = PROJECT_ROOT / "data" / "raw" / f"comments_{video_id}.json"
     save_into.parent.mkdir(parents=True, exist_ok=True)
 
     with open(save_into, mode="w", encoding="utf-8") as f:

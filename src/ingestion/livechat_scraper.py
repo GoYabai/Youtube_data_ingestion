@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yt_dlp
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def extract_text(message_data):
     """
@@ -39,23 +41,18 @@ def extract_text(message_data):
 
 
 def normalize_type(renderer_name):
-    """
-    Convert YouTube renderer name into a simpler type.
-    """
 
     type_mapping = {
         "liveChatTextMessageRenderer": "text",
         "liveChatPaidMessageRenderer": "super_chat",
+        "liveChatPaidStickerRenderer": "super_sticker",
         "liveChatMembershipItemRenderer": "membership",
-        "liveChatPaidStickerRenderer": "paid_sticker",
+        "giftMessageViewModel": "gift",
         "liveChatViewerEngagementMessageRenderer": "system",
         "liveChatPlaceholderItemRenderer": "placeholder",
     }
 
-    if renderer_name in type_mapping:
-        return type_mapping[renderer_name]
-
-    return renderer_name
+    return type_mapping.get(renderer_name, renderer_name)
 
 
 def timestamp_to_datetime(timestamp_usec):
@@ -80,156 +77,168 @@ def timestamp_to_datetime(timestamp_usec):
         return None
 
 
+
 def parse_chat_line(line, video_id):
     """
-    Parse one NDJSON line produced by yt-dlp.
+    Parse a single yt-dlp live chat JSON line.
 
-    Return:
-        normalized message dictionary
-        or None if the line is not a real chat message.
+    Supports:
+        - VOD live chat replay
+        - Active YouTube livestream chat
+
+    Returns:
+        dict or None
     """
 
+    # 1. Convert JSON string into dictionary
     try:
         data = json.loads(line)
     except json.JSONDecodeError:
         return None
 
-    # ---------------------------------------------------------
-    # 1. Get replayChatItemAction
-    # ---------------------------------------------------------
-
-    replay_action = data.get("replayChatItemAction")
-
-    if not replay_action:
+    if not isinstance(data, dict):
         return None
 
-    # ---------------------------------------------------------
-    # 2. Get actions
-    # ---------------------------------------------------------
+    # 2. Detect LIVE or VOD
+    is_live = data.get("isLive", False)
+
+    # 3. Get replayChatItemAction
+    replay_action = data.get("replayChatItemAction")
+
+    if not isinstance(replay_action, dict):
+        return None
 
     actions = replay_action.get("actions", [])
 
-    if not actions:
-        return None
-
-    # ---------------------------------------------------------
-    # 3. Find addChatItemAction
-    # ---------------------------------------------------------
-
-    add_action = None
-
+    # 4. Find actual chat messages
     for action in actions:
-        if "addChatItemAction" in action:
-            add_action = action["addChatItemAction"]
-            break
 
-    if not add_action:
-        return None
+        if not isinstance(action, dict):
+            continue
 
-    # ---------------------------------------------------------
-    # 4. Get item
-    # ---------------------------------------------------------
+        add_action = action.get("addChatItemAction")
 
-    item = add_action.get("item")
+        if not isinstance(add_action, dict):
+            continue
 
-    if not item:
-        return None
+        item = add_action.get("item", {})
 
-    # ---------------------------------------------------------
-    # 5. Detect renderer type
-    # ---------------------------------------------------------
+        if not isinstance(item, dict):
+            continue
 
-    renderer_name = None
-    renderer = None
+        # 5. Detect renderer
+        renderer_name = None
+        renderer = None
 
-    for key, value in item.items():
-        if key.endswith("Renderer") or key.endswith("ViewModel"):
-            renderer_name = key
-            renderer = value
-            break
+        for key, value in item.items():
+            if (
+                key.endswith(("Renderer", "ViewModel"))
+                and isinstance(value, dict)
+            ):
+                renderer_name = key
+                renderer = value
+                break
 
-    if renderer_name is None:
-        return None
+        if renderer is None:
+            continue
 
-    # ---------------------------------------------------------
-    # 6. Ignore placeholder
-    # ---------------------------------------------------------
+        # 6. Skip system and placeholder events
+        if renderer_name in (
+            "liveChatPlaceholderItemRenderer",
+            "liveChatViewerEngagementMessageRenderer",
+        ):
+            continue
 
-    if renderer_name == "liveChatPlaceholderItemRenderer":
-        return None
+        # 7. Extract message ID
+        message_id = renderer.get("id")
 
-    # ---------------------------------------------------------
-    # 7. Extract author
-    # ---------------------------------------------------------
+        if not message_id:
+            continue
 
-    author = None
+        # 8. Extract author
+        author = (
+            renderer.get("authorName") or {}
+        ).get("simpleText")
 
-    author_name = renderer.get("authorName")
+        # 9. Extract message text
+        message = extract_text(
+            renderer.get("message")
+        )
 
-    if author_name:
-        author = author_name.get("simpleText")
+        # 10. Convert timestampUsec to ISO datetime
+        timestamp = timestamp_to_datetime(
+            renderer.get("timestampUsec")
+        )
 
-    # ---------------------------------------------------------
-    # 8. Extract message
-    # ---------------------------------------------------------
+        
+        # Handle giftMessageViewModel separately
+        if renderer_name == "giftMessageViewModel":
 
-    message = extract_text(renderer.get("message"))
+            author_data = renderer.get("authorName") or {}
+            text_data = renderer.get("text") or {}
 
-    # ---------------------------------------------------------
-    # 9. Extract timestamps
-    # ---------------------------------------------------------
+            # Gift uses "content" instead of "simpleText"
+            author = author_data.get("content") or author
 
-    timestamp_usec = renderer.get("timestampUsec")
+            # Gift announcement text is stored in "text.content"
+            message = text_data.get("content") or message
 
-    timestamp = timestamp_to_datetime(timestamp_usec)
+            # No timestampUsec was found in the inspected gift schema.
+            # Keep timestamp = None rather than inventing one.
 
-    timestamp_text = None
 
-    timestamp_text_data = renderer.get("timestampText")
+        # 11. Handle LIVE / VOD timing
+        if is_live:
+            elapsed_time = None
+            elapsed_time_ms = None
 
-    if timestamp_text_data:
-        timestamp_text = timestamp_text_data.get("simpleText")
+        else:
+            elapsed_time = (
+                renderer.get("timestampText") or {}
+            ).get("simpleText")
 
-    # ---------------------------------------------------------
-    # 10. Extract replay offset
-    # ---------------------------------------------------------
+            raw_offset = replay_action.get(
+                "videoOffsetTimeMsec"
+            )
 
-    video_offset_ms = replay_action.get("videoOffsetTimeMsec")
+            try:
+                elapsed_time_ms = (
+                    int(raw_offset)
+                    if raw_offset is not None
+                    else None
+                )
+            except (ValueError, TypeError):
+                elapsed_time_ms = None
 
-    if video_offset_ms is not None:
-        try:
-            video_offset_ms = int(video_offset_ms)
+        # 12. Normalize message type
+        message_type = normalize_type(renderer_name)
 
-        except (ValueError, TypeError):
-            video_offset_ms = None
+        # 13. Extract Super Chat / Super Sticker amount
+        amount = None
 
-    # ---------------------------------------------------------
-    # 11. Normalize type
-    # ---------------------------------------------------------
+        if renderer_name in (
+            "liveChatPaidMessageRenderer",
+            "liveChatPaidStickerRenderer",
+        ):
+            amount = (
+                renderer.get("purchaseAmountText") or {}
+            ).get("simpleText")
 
-    message_type = normalize_type(renderer_name)
+        # 14. Return normalized message
+        return {
+            "message_id": message_id,
+            "video_id": video_id,
+            "author": author,
+            "message": message,
+            "timestamp": timestamp,
+            "elapsed_time": elapsed_time,
+            "elapsed_time_ms": elapsed_time_ms,
+            "type": message_type,
+            "amount": amount,
+        }
 
-    amount = None
+    return None
 
-    if renderer_name == "liveChatPaidMessageRenderer":
-        purchase_amount = renderer.get("purchaseAmountText")
-        if purchase_amount:
-            amount = purchase_amount.get("simpleText")
-
-    # ---------------------------------------------------------
-    # 12. Return normalized record
-    # ---------------------------------------------------------
-
-    return {
-        "video_id": video_id,
-        "author": author,
-        "message": message,
-        "timestamp": timestamp,
-        "elapsed_time": timestamp_text,
-        "elapsed_time_ms": video_offset_ms,
-        "type": message_type,
-        "amount": amount,
-    }
 
 
 def download_live_chat(video_url, output_dir):
@@ -312,7 +321,7 @@ def save_messages(
     Save normalized messages.
     """
 
-    output_path = Path(f"data/raw/livechat_{video_id}.json")
+    output_path = PROJECT_ROOT / "data" / "raw" / f"livechat_{video_id}.json"
 
     output_path.parent.mkdir(
         parents=True,
@@ -341,7 +350,7 @@ def fetch_livechat(video_url):
 
     print("[+] Fetching YouTube live chat...")
 
-    temp_dir = Path("data/raw/livechat_download")
+    temp_dir = PROJECT_ROOT / "data" / "raw" / "livechat_download"
 
     try:
         # -----------------------------------------------------

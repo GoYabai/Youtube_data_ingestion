@@ -1,3 +1,19 @@
-data/
+# Local secrets
 .env
+.env.*
+!.env.example
+
+# Generated data; keep the input video list and small demo Parquet
+data/raw/
+data/processed/
+data/checkpoints/
+data/streaming/
+
+# Temporary files / caches
 __pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+stop_*.flag
