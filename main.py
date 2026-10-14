@@ -1,10 +1,13 @@
+import os
 from pathlib import Path
 
 from src.ingestion.livechat_scraper import fetch_livechat
 from src.ingestion.youtube_api import fetch_youtube_comments
 from src.processing.extract_video_id import extract_video_id
+from src.processing.spark_processor import process_comments
 
 if __name__ == "__main__":
+    os.chdir(Path(__file__).resolve().parent)
     print("=" * 50)
     print("YOUTUBE DATA INGESTION PIPELINE")
     print("=" * 50)
@@ -14,15 +17,16 @@ if __name__ == "__main__":
         print("1: Fetch comment (Single video)")
         print("2: Fetch live chat (Single video)")
         print("3: Batch fetch comments (From data/video_links.txt)")
+        print("4: Run Spark processing")
         print("0: Exit")
 
         try:
             choice = int(input("Your choice (0-3): "))
-            if choice not in (0, 1, 2, 3):
-                print("[-] Please enter a valid choice (0-3)")
+            if choice not in (0, 1, 2, 3, 4):
+                print("[-] Please enter a valid choice (0-4)")
                 continue
         except ValueError:
-            print("[-] Please enter a number (0-3)")
+            print("[-] Please enter a number (0-4)")
             continue
 
         if choice == 0:
@@ -86,3 +90,16 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[-] Error: {e}")
             print("-" * 50)
+
+        if choice == 4:
+            print("[+] Starting Spark processing...")
+
+            try:
+                process_comments()
+                print("[+] Spark processing completed!")
+
+            except Exception as e:
+                print(f"[-] Spark processing failed: {e}")
+
+            print("-" * 50)
+            continue
